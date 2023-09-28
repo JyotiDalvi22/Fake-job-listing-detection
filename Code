@@ -1,0 +1,94 @@
+import re
+import string
+import numpy as np
+import pandas as pd
+import random
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.model_selection import train_test_split
+from sklearn.base import TransformerMixin
+from wordcloud import WordCloud
+import spacy
+from spacy.lang.en.stop_words import STOP_WORDS
+from spacy.lang.en import English
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+
+# Load the data
+df = pd.read_csv('/content/fake_job_postings.csv')
+
+# Drop columns with many missing values
+columns_to_delete = ['job_id', 'telecommuting', 'has_company_logo', 'has_questions', 'salary_range', 'employment_type']
+df.drop(columns=columns_to_delete, inplace=True)
+
+# Fill missing values with empty strings
+df.fillna('', inplace=True)
+
+# Create a 'text' column by concatenating relevant columns
+df['text'] = df['title'] + ' ' + df['company_profile'] + ' ' + df['description'] + ' ' + df['requirements'] + ' ' + df['benefits']
+
+# Drop the original columns
+columns_to_delete = [
+    'title', 'location', 'department', 'company_profile',
+    'description', 'requirements', 'benefits',
+    'required_experience', 'required_education',
+    'industry', 'function'
+]
+df.drop(columns=columns_to_delete, inplace=True)
+
+# Tokenization using spaCy
+punctuations = string.punctuation
+nlp = spacy.load("en_core_web_sm")
+
+def spacy_tokenizer(sentence):
+    mytokens = nlp(sentence)
+    mytokens = [word.lemma_.lower().strip() if word.lemma_ != "-PRON-" else word.lower_ for word in mytokens]
+    mytokens = [word for word in mytokens if word not in STOP_WORDS and word not in punctuations]
+    return mytokens
+
+# Define a custom transformer for text preprocessing
+class TextPreprocessor(TransformerMixin):
+    def transform(self, X, **transform_params):
+        return [' '.join(spacy_tokenizer(text)) for text in X]
+
+    def fit(self, X, y=None, **fit_params):
+        return self
+
+    def get_params(self, deep=True):
+        return {}
+
+# Apply text preprocessing
+text_preprocessor = TextPreprocessor()
+df['text'] = text_preprocessor.transform(df['text'])
+
+# Vectorize the text data using TF-IDF
+tfidf_vectorizer = TfidfVectorizer(max_features=100)
+X = tfidf_vectorizer.fit_transform(df['text'])
+df1 = pd.DataFrame(X.toarray(), columns=tfidf_vectorizer.get_feature_names_out())
+df.drop(["text"], axis=1, inplace=True)
+main_df = pd.concat([df1, df], axis=1)
+
+# Define the target variable (Y) and features (X)
+Y = main_df.iloc[:, -1]
+X = main_df.iloc[:, :-1]
+
+# Split the data into training and testing sets
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.3, random_state=42)
+
+# Create and train a Random Forest Classifier
+rfc = RandomForestClassifier(n_jobs=3, oob_score=True, n_estimators=100, criterion="entropy")
+model = rfc.fit(X_train, Y_train)
+
+# Make predictions on the test set
+pred = rfc.predict(X_test)
+
+# Calculate accuracy
+score = accuracy_score(Y_test, pred)
+print(f"Accuracy Score: {score:.2f}")
+
+# Print classification report and confusion matrix
+print("Classification Report\n")
+print(classification_report(Y_test, pred))
+print("Confusion Matrix\n")
+print(confusion_matrix(Y_test, pred))
